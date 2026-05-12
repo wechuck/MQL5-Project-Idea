@@ -655,30 +655,8 @@ bool IsInSession(MqlDateTime &dt, SessionTime &session)
 //+------------------------------------------------------------------+
 //| BUG 2: Draw session high/low lines - FULLY IMPLEMENTED            |
 //+------------------------------------------------------------------+
-void DrawSessionLines(string sessionName, color lineColor)
+void UpdateAndDrawSessionLines(string sessionName, color lineColor, SessionHighLow &session_hl, SessionTime &session_time)
 {
-    SessionHighLow* session_hl;
-    SessionTime* session_time;
-
-    // Select the appropriate session
-    if(sessionName == "Asian")
-    {
-        session_hl = &Asian_HL;
-        session_time = &Asian;
-    }
-    else if(sessionName == "London")
-    {
-        session_hl = &London_HL;
-        session_time = &London;
-    }
-    else if(sessionName == "NewYork")
-    {
-        session_hl = &NewYork_HL;
-        session_time = &NewYork;
-    }
-    else
-        return;
-
     datetime currentTime = TimeCurrent();
     MqlDateTime dt;
     TimeToStruct(currentTime, dt);
@@ -713,6 +691,27 @@ void DrawSessionLines(string sessionName, color lineColor)
 
     DrawHLine(highName, session_hl.High, lineColor, 2, STYLE_DASH);
     DrawHLine(lowName, session_hl.Low, lineColor, 2, STYLE_DASH);
+}
+
+void DrawSessionLines(string sessionName, color lineColor)
+{
+    if(sessionName == "Asian")
+    {
+        UpdateAndDrawSessionLines(sessionName, lineColor, Asian_HL, Asian);
+        return;
+    }
+
+    if(sessionName == "London")
+    {
+        UpdateAndDrawSessionLines(sessionName, lineColor, London_HL, London);
+        return;
+    }
+
+    if(sessionName == "NewYork")
+    {
+        UpdateAndDrawSessionLines(sessionName, lineColor, NewYork_HL, NewYork);
+        return;
+    }
 }
 
 //+------------------------------------------------------------------+
