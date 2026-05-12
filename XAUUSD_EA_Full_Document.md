@@ -171,8 +171,8 @@ EA only opens new trades during these windows (broker server time):
 - After spread returns to normal, wait an additional **7 candles** before re-enabling entries
 
 ### Protection 3 — Slippage Protector
-- Maximum slippage tolerance: **5 points**
-- If the fill price is more than 5 points away from the signal price → cancel the order
+- Maximum slippage tolerance: **30 points**
+- If the fill price is more than 30 points away from the signal price → cancel the order
 - Prevents bad fills during volatile spikes
 
 ### Protection 4 — Daily Equity Hard Stop
