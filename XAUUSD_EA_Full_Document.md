@@ -26,7 +26,7 @@ Automatically draw and maintain 3 key reference lines on the chart. These lines 
 - Timeframe: 1 Day
 - Color: Orange
 - Draws **2 lines simultaneously** — the highest high AND the lowest low
-- Looks back a maximum of **~4 days** (not strict — uses nearest swing high and swing low)
+- Uses only the **most recently completed daily bar** (D1, bar 1) high and low
 - If a new daily high or new daily low forms, the line updates to that new level
 - When price closes completely through a line, that line is no longer valid as support/resistance
 
@@ -408,4 +408,3 @@ At least one of these must be present at the same level:
 ### Multi-Timeframe Line Drawing
 - Use `ChartIndicatorAdd()` or draw objects using `ObjectCreate()` with `OBJ_HLINE` and `OBJ_TREND`
 - Lines drawn as chart objects — visible across timeframes when object is created on the correct timeframe
-

@@ -244,7 +244,7 @@ EA only opens new trades during these windows. Trades opened during a session ca
 ## 🎨 Chart Visualization
 
 ### Key Level Lines (IDEA 1)
-- **Orange (3px)**: Daily High/Low from last ~4 days
+- **Orange (3px)**: Daily High/Low from the most recently completed D1 bar
 - **Light Green (3px)**: 1H Fibonacci 0.68 level
 - **Blue (3px)**: 15M Fibonacci 0.68 diagonal trendline
 
