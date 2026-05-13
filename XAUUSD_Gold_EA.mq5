@@ -1149,7 +1149,12 @@ datetime GetNextSessionStart(datetime fromTime)
         MqlDateTime candidate = dayStruct;
         candidate.sec = 0;
 
-        int starts[3] = {Asian.StartHour * 60 + Asian.StartMinute, London.StartHour * 60 + London.StartMinute, NewYork.StartHour * 60 + NewYork.StartMinute};
+        int starts[3] =
+        {
+            Asian.StartHour * 60 + Asian.StartMinute,
+            London.StartHour * 60 + London.StartMinute,
+            NewYork.StartHour * 60 + NewYork.StartMinute
+        };
         for(int i = 0; i < 3; i++)
         {
             candidate.hour = starts[i] / 60;
