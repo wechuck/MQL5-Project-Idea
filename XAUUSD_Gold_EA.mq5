@@ -525,23 +525,11 @@ void DrawKeyLevels()
 //+------------------------------------------------------------------+
 void DrawDailyHighLow()
 {
-    double highestHigh = 0;
-    double lowestLow = DBL_MAX;
+    if(iBars(_Symbol, PERIOD_D1) < 2)
+        return;
 
-    // Look back ~4 days for swing high/low
-    for(int i = 0; i < DailyLookback; i++)
-    {
-        double high = iHigh(_Symbol, PERIOD_D1, i);
-        double low = iLow(_Symbol, PERIOD_D1, i);
-
-        if(high > highestHigh)
-            highestHigh = high;
-        if(low < lowestLow)
-            lowestLow = low;
-    }
-
-    Daily_High = highestHigh;
-    Daily_Low = lowestLow;
+    Daily_High = iHigh(_Symbol, PERIOD_D1, 1);
+    Daily_Low = iLow(_Symbol, PERIOD_D1, 1);
 
     // Draw high line
     DrawHLine("Daily_High", Daily_High, clrOrange, 3, STYLE_SOLID);
@@ -581,15 +569,23 @@ void DrawM15FibLevel()
     // Calculate 0.68 Fib level
     M15_Fib_Level = low + (high - low) * FibLevel;
 
-    // BUG 10 FIX: Draw as truly diagonal trendline
-    // Point 1: Time of M15 swing low, price = M15 swing low
-    // Point 2: Current time, price = current M15 Fib 0.68 level
-    datetime time1 = iTime(_Symbol, PERIOD_M15, lowestBar);
-    double price1 = low;  // Start at swing low
-    datetime time2 = iTime(_Symbol, PERIOD_M15, 0);
-    double price2 = M15_Fib_Level;  // End at current Fib level
+    datetime lowTime = iTime(_Symbol, PERIOD_M15, lowestBar);
+    datetime highTime = iTime(_Symbol, PERIOD_M15, highestBar);
+    datetime currentTime = iTime(_Symbol, PERIOD_M15, 0);
 
-    DrawTrendLine("M15_Fib_068_Trend", time1, price1, time2, price2, clrBlue, 3, STYLE_SOLID);
+    double bottomAtCurrent = M15_Fib_Level;
+    double topAtCurrent = high;
+
+    long lowToCurrent = (long)(currentTime - lowTime);
+    if(lowToCurrent > 0)
+    {
+        double slopePerSecond = (bottomAtCurrent - low) / (double)lowToCurrent;
+        topAtCurrent = high + slopePerSecond * (double)(currentTime - highTime);
+    }
+
+    ObjectDelete(0, "M15_Fib_068_Trend");
+    DrawTrendLine("M15_Channel_Bottom", lowTime, low, currentTime, bottomAtCurrent, clrBlue, 3, STYLE_SOLID);
+    DrawTrendLine("M15_Channel_Top", highTime, high, currentTime, topAtCurrent, clrBlue, 3, STYLE_SOLID);
 }
 
 //+------------------------------------------------------------------+
@@ -944,9 +940,9 @@ void DetectOrderBlocks()
 bool CheckIndicatorFilters(bool &isBuySignal)
 {
     // Copy indicator buffers
-    if(CopyBuffer(handle_ADX_M15, 0, 0, 3, ADX_Main) <= 0) return false;
-    if(CopyBuffer(handle_ADX_M15, 1, 0, 3, ADX_Plus) <= 0) return false;
-    if(CopyBuffer(handle_ADX_M15, 2, 0, 3, ADX_Minus) <= 0) return false;
+    if(CopyBuffer(handle_ADX_M15, 0, 0, 2, ADX_Main) <= 0) return false;
+    if(CopyBuffer(handle_ADX_M15, 1, 0, 2, ADX_Plus) <= 0) return false;
+    if(CopyBuffer(handle_ADX_M15, 2, 0, 2, ADX_Minus) <= 0) return false;
     if(CopyBuffer(handle_RSI_M15, 0, 0, 1, RSI_M15) <= 0) return false;
     if(CopyBuffer(handle_Stoch_M15, 0, 0, 1, Stoch_Main_M15) <= 0) return false;
     if(CopyBuffer(handle_ATR_M15, 0, 0, 1, ATR_M15) <= 0) return false;
@@ -1293,7 +1289,7 @@ int CalculateConfluenceScore(bool isBuySignal)
         }
 
         // ADX above 25 with correct DI direction
-        if(CopyBuffer(handle_ADX_M15, 1, 0, 1, ADX_Plus) > 0 && CopyBuffer(handle_ADX_M15, 2, 0, 1, ADX_Minus) > 0)
+        if(CopyBuffer(handle_ADX_M15, 1, 0, 2, ADX_Plus) > 0 && CopyBuffer(handle_ADX_M15, 2, 0, 2, ADX_Minus) > 0)
         {
             double plus_di = ADX_Plus[0];
             double minus_di = ADX_Minus[0];
@@ -1911,7 +1907,7 @@ void UpdateUI()
     ObjectSetInteger(0, UI_Label_Prefix + "Status", OBJPROP_COLOR, statusColor);
 
     // Indicators
-    if(CopyBuffer(handle_ADX_M15, 0, 0, 1, ADX_Main) > 0)
+    if(CopyBuffer(handle_ADX_M15, 0, 0, 2, ADX_Main) > 0)
         ObjectSetString(0, UI_Label_Prefix + "ADX", OBJPROP_TEXT,
                         "ADX: " + DoubleToString(ADX_Main[0], 1));
 
