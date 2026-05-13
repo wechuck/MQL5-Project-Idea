@@ -44,6 +44,7 @@ Final:   $20,000 → $40,000
 - **Weekly**: ~10 quality trades
 - Automatic frequency limiting to prevent overtrading
 - Quality over quantity approach
+- Optional **HFT mode** for up to 10 trades/day with shorter spacing between entries
 
 ### Risk Management
 - Dynamic lot sizing based on balance stage
@@ -67,7 +68,7 @@ Final:   $20,000 → $40,000
 - Spread filter (max 35 points)
 - ATR volatility guard
 - News event blocking (high-impact only)
-- Slippage protection (max 5 points)
+- Slippage protection (max 30 points)
 - Daily loss limits
 
 ---
@@ -109,6 +110,14 @@ Final:   $20,000 → $40,000
 Daily Lookback: 4
 Fibonacci Level: 0.68
 
+=== IDEA 2 — Smart Money Concepts ===
+Enable Session Lines: true
+Enable RSI+Stoch Dots: true
+Enable Candle Pattern Arrows: true
+Enable FVG: true
+Enable BIAS Line: true
+Enable Order Blocks: true
+
 === IDEA 3 — Indicator Filters ===
 RSI Period: 14
 Stochastic K: 14
@@ -119,13 +128,14 @@ ADX Period: 14
 
 === IDEA 4 — Protection System ===
 Max Spread: 35 points
-Max Slippage: 5 points
+Max Slippage: 30 points
 News Block Before: 15 minutes
 News Block After: 15 minutes
 ATR Min Threshold: 5.0
 ATR Max Threshold: 150.0
 Daily Loss Limit (Small): $5.00
 Spread Calm Candles Wait: 7
+Consecutive Loss Pause Count: 3
 
 === IDEA 5 — TP/SL & Risk ===
 SL ATR Multiplier: 1.5
@@ -140,6 +150,10 @@ Min SL M15: 40-80 pips
 Max Trades/Day (Small): 3
 Max Trades/Day (Large): 5
 Target Trades/Day: 1.5
+Confluence Min Score: 80
+HFT Mode: true
+HFT Max Trades/Day: 10
+HFT Min Seconds Between Trades: 30
 
 === Progressive Weekly Targets ===
 Use Progressive Targets: true

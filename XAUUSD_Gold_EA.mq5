@@ -26,6 +26,15 @@ input group "IDEA 1 — Key Level Lines"
 input int DailyLookback = 4;                    // Daily lookback period
 input double FibLevel = 0.68;                   // Fibonacci 0.68 level
 
+// === IDEA 2: Smart Money Concepts ===
+input group "IDEA 2 — Smart Money Concepts"
+input bool EnableSessionLines = true;           // Draw Asian/London/New York high-low
+input bool EnableRSIStochDots = true;           // Draw RSI+Stochastic confluence dots
+input bool EnableCandlePatternArrows = true;    // Draw Engulfing/Pin Bar arrows
+input bool EnableFVG = true;                    // Detect and draw Fair Value Gaps
+input bool EnableBIASLine = true;               // Draw directional BIAS line
+input bool EnableOrderBlocks = true;            // Detect and draw order blocks
+
 // === IDEA 3: Indicator Filters ===
 input group "IDEA 3 — Indicator Filters"
 input int RSI_Period = 14;                      // RSI Period
@@ -38,13 +47,14 @@ input int ADX_Period = 14;                      // ADX Period
 // === IDEA 4: Protection System ===
 input group "IDEA 4 — Protection System"
 input int MaxSpread = 35;                       // Max spread in points
-input int MaxSlippage = 5;                      // Max slippage in points
+input int MaxSlippage = 30;                     // Max slippage in points
 input int NewsBlockMinutesBefore = 15;          // News block before (minutes)
 input int NewsBlockMinutesAfter = 15;           // News block after (minutes)
 input double ATR_MinThreshold = 5.0;            // ATR minimum threshold
 input double ATR_MaxThreshold = 150.0;          // ATR maximum threshold
 input double DailyLossLimit_Small = 5.0;        // Daily loss limit under $100
 input int SpreadCalmCandlesWait = 7;            // Candles to wait after spread spike
+input int ConsecutiveLossPauseCount = 3;        // Pause after N consecutive losses
 
 // === IDEA 5: TP/SL/Trailing/Lot Sizing ===
 input group "IDEA 5 — TP/SL & Risk Management"
@@ -63,6 +73,10 @@ input group "IDEA 6 — Entry Control"
 input int MaxTradesPerDay_Small = 3;            // Max trades/day (balance < $100)
 input int MaxTradesPerDay_Large = 5;            // Max trades/day (balance >= $100)
 input double TargetTradesPerDay = 1.5;          // Target trades per day (1-2)
+input int ConfluenceMinScore = 80;              // Standard mode minimum confluence
+input bool HFT_Mode = true;                     // HFT mode enable
+input int HFT_MaxTradesPerDay = 10;             // HFT max trades/day
+input int HFT_MinSecondsBetweenTrades = 30;     // Minimum seconds between entries in HFT mode
 
 // === Progressive Weekly Targets ===
 input group "Progressive Weekly Targets"
@@ -123,14 +137,17 @@ datetime LastTradeDate = 0;
 datetime CurrentDay = 0;
 double DailyStartingEquity = 0;
 double AccountHighWaterMark = 0;
+double WeekStartBalance = 0;
 int ConsecutiveLosses = 0;
 datetime PauseUntil = 0;
+datetime LastTradeOpenTime = 0;
 bool TradingPausedToday = false;
 bool TradingPausedForever = false;  // BUG 6: For 20% drawdown
 
 // Spread spike tracking
 datetime SpreadSpikeTime = 0;
 int CandlesSinceSpreadNormal = 0;
+datetime LastM15BarTime = 0;
 
 // Session high/low tracking (BUG 2)
 struct SessionHighLow {
@@ -266,9 +283,11 @@ int OnInit()
 
     // Initialize account tracking
     AccountHighWaterMark = account.Balance();
+    WeekStartBalance = account.Balance();
     DailyStartingEquity = account.Equity();
     CurrentDay = iTime(_Symbol, PERIOD_D1, 0);
     StartDate = TimeCurrent();
+    LastM15BarTime = iTime(_Symbol, PERIOD_M15, 0);
 
     // Initialize Smart Money structures
     BullishOB.IsValid = false;
@@ -287,6 +306,9 @@ int OnInit()
 
     // Draw key levels
     DrawKeyLevels();
+
+    // Load today news immediately on startup
+    LoadNewsCalendar();
 
     Print("Initialization complete. Starting balance: $", DoubleToString(account.Balance(), 2));
     Print("Target: $", DoubleToString(FinalTarget, 2));
@@ -332,11 +354,11 @@ void OnTick()
     CheckNewDay();
 
     // Update key levels on new bar
-    static datetime lastBarTime = 0;
     datetime currentBarTime = iTime(_Symbol, PERIOD_M15, 0);
-    if(currentBarTime != lastBarTime)
+    if(currentBarTime != LastM15BarTime)
     {
-        lastBarTime = currentBarTime;
+        LastM15BarTime = currentBarTime;
+        UpdateSpreadCalmCounter();
         DrawKeyLevels();
     }
 
@@ -396,18 +418,11 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
         ConsecutiveLosses++;
         Print("Loss detected. Consecutive losses: ", ConsecutiveLosses);
 
-        // Pause for rest of day after 2 consecutive losses
-        if(ConsecutiveLosses >= 2)
+        // Pause until next active session after configured loss streak
+        if(ConsecutiveLosses >= ConsecutiveLossPauseCount)
         {
-            TradingPausedToday = true;
-            Print("2 consecutive losses - Trading paused for rest of day");
-        }
-
-        // Pause for 24 hours after 3 consecutive losses
-        if(ConsecutiveLosses >= 3)
-        {
-            PauseUntil = TimeCurrent() + 86400; // 24 hours
-            Print("3 consecutive losses - Trading paused for 24 hours until ", TimeToString(PauseUntil));
+            PauseUntil = GetNextSessionStart(TimeCurrent());
+            Print("Consecutive loss pause active until next session: ", TimeToString(PauseUntil));
         }
     }
     else if(profit > 0)
@@ -427,6 +442,7 @@ void CheckNewDay()
 
     if(newDay != CurrentDay)
     {
+        int previousWeek = CurrentWeek;
         CurrentDay = newDay;
         TradesOpenedToday = 0;
         DailyStartingEquity = account.Equity();
@@ -435,6 +451,8 @@ void CheckNewDay()
 
         // Calculate current week
         CurrentWeek = (int)((TimeCurrent() - StartDate) / (7 * 24 * 3600)) + 1;
+        if(CurrentWeek != previousWeek)
+            WeekStartBalance = account.Balance();
 
         // BUG 1: Load news calendar for the day
         LoadNewsCalendar();
@@ -598,22 +616,28 @@ void DrawM15FibLevel()
 void UpdateSmartMoneyComponents()
 {
     // Component A: Session High/Low (updated at session start)
-    DrawSessionHighLow();
+    if(EnableSessionLines)
+        DrawSessionHighLow();
 
     // Component B: RSI + Stochastic Confluence Dot
-    DrawRSIStochDots();
+    if(EnableRSIStochDots)
+        DrawRSIStochDots();
 
     // Component C: Candle Pattern Arrows
-    DetectCandlePatterns();
+    if(EnableCandlePatternArrows)
+        DetectCandlePatterns();
 
     // Component D: Fair Value Gaps
-    DetectFVG();
+    if(EnableFVG)
+        DetectFVG();
 
     // Component E: BIAS Line
-    DrawBIASLine();
+    if(EnableBIASLine)
+        DrawBIASLine();
 
     // Component F: Order Blocks
-    DetectOrderBlocks();
+    if(EnableOrderBlocks)
+        DetectOrderBlocks();
 }
 
 //+------------------------------------------------------------------+
@@ -719,24 +743,25 @@ void DrawSessionLines(string sessionName, color lineColor)
 //+------------------------------------------------------------------+
 void DrawRSIStochDots()
 {
-    if(CopyBuffer(handle_RSI_M15, 0, 0, 1, RSI_M15) <= 0) return;
-    if(CopyBuffer(handle_Stoch_M15, 0, 0, 1, Stoch_Main_M15) <= 0) return;
+    if(CopyBuffer(handle_RSI_M15, 0, 0, 2, RSI_M15) <= 0) return;
+    if(CopyBuffer(handle_Stoch_M15, 0, 0, 2, Stoch_Main_M15) <= 0) return;
 
-    double rsi = RSI_M15[0];
-    double stoch = Stoch_Main_M15[0];
+    double rsi = RSI_M15[1];
+    double stoch = Stoch_Main_M15[1];
+    datetime closedBarTime = iTime(_Symbol, PERIOD_M15, 1);
 
     // Oversold confluence (buy signal)
     if(rsi < 30 && stoch < 20)
     {
-        DrawDot("RSI_Stoch_Buy_" + IntegerToString(iTime(_Symbol, PERIOD_M15, 0)),
-                iTime(_Symbol, PERIOD_M15, 0), iLow(_Symbol, PERIOD_M15, 0), clrLime);
+        DrawDot("RSI_Stoch_Buy_" + IntegerToString(closedBarTime),
+                closedBarTime, iLow(_Symbol, PERIOD_M15, 1), clrLime);
     }
 
     // Overbought confluence (sell signal)
     if(rsi > 70 && stoch > 80)
     {
-        DrawDot("RSI_Stoch_Sell_" + IntegerToString(iTime(_Symbol, PERIOD_M15, 0)),
-                iTime(_Symbol, PERIOD_M15, 0), iHigh(_Symbol, PERIOD_M15, 0), clrRed);
+        DrawDot("RSI_Stoch_Sell_" + IntegerToString(closedBarTime),
+                closedBarTime, iHigh(_Symbol, PERIOD_M15, 1), clrRed);
     }
 }
 
@@ -745,31 +770,29 @@ void DrawRSIStochDots()
 //+------------------------------------------------------------------+
 void DetectCandlePatterns()
 {
-    double open0 = iOpen(_Symbol, PERIOD_M15, 0);
-    double close0 = iClose(_Symbol, PERIOD_M15, 0);
-    double high0 = iHigh(_Symbol, PERIOD_M15, 0);
-    double low0 = iLow(_Symbol, PERIOD_M15, 0);
+    double open0 = iOpen(_Symbol, PERIOD_M15, 1);
+    double close0 = iClose(_Symbol, PERIOD_M15, 1);
+    double high0 = iHigh(_Symbol, PERIOD_M15, 1);
+    double low0 = iLow(_Symbol, PERIOD_M15, 1);
 
-    double open1 = iOpen(_Symbol, PERIOD_M15, 1);
-    double close1 = iClose(_Symbol, PERIOD_M15, 1);
-    double high1 = iHigh(_Symbol, PERIOD_M15, 1);
-    double low1 = iLow(_Symbol, PERIOD_M15, 1);
+    double open1 = iOpen(_Symbol, PERIOD_M15, 2);
+    double close1 = iClose(_Symbol, PERIOD_M15, 2);
 
     double body0 = MathAbs(close0 - open0);
-    double body1 = MathAbs(close1 - open1);
+    datetime closedBarTime = iTime(_Symbol, PERIOD_M15, 1);
 
     // Bullish Engulfing
     if(close1 < open1 && close0 > open0 && close0 > open1 && open0 < close1)
     {
-        DrawArrow("Bullish_Engulf_" + IntegerToString(iTime(_Symbol, PERIOD_M15, 0)),
-                  iTime(_Symbol, PERIOD_M15, 0), low0, 233, clrLime);
+        DrawArrow("Bullish_Engulf_" + IntegerToString(closedBarTime),
+                  closedBarTime, low0, 233, clrLime);
     }
 
     // Bearish Engulfing
     if(close1 > open1 && close0 < open0 && close0 < open1 && open0 > close1)
     {
-        DrawArrow("Bearish_Engulf_" + IntegerToString(iTime(_Symbol, PERIOD_M15, 0)),
-                  iTime(_Symbol, PERIOD_M15, 0), high0, 234, clrRed);
+        DrawArrow("Bearish_Engulf_" + IntegerToString(closedBarTime),
+                  closedBarTime, high0, 234, clrRed);
     }
 
     // Pin Bar / Rejection Wick
@@ -778,14 +801,14 @@ void DetectCandlePatterns()
 
     if(lowerWick > body0 * 2)
     {
-        DrawArrow("Pin_Bullish_" + IntegerToString(iTime(_Symbol, PERIOD_M15, 0)),
-                  iTime(_Symbol, PERIOD_M15, 0), low0, 233, clrYellow);
+        DrawArrow("Pin_Bullish_" + IntegerToString(closedBarTime),
+                  closedBarTime, low0, 233, clrYellow);
     }
 
     if(upperWick > body0 * 2)
     {
-        DrawArrow("Pin_Bearish_" + IntegerToString(iTime(_Symbol, PERIOD_M15, 0)),
-                  iTime(_Symbol, PERIOD_M15, 0), high0, 234, clrOrange);
+        DrawArrow("Pin_Bearish_" + IntegerToString(closedBarTime),
+                  closedBarTime, high0, 234, clrOrange);
     }
 }
 
@@ -794,19 +817,18 @@ void DetectCandlePatterns()
 //+------------------------------------------------------------------+
 void DetectFVG()
 {
-    double high0 = iHigh(_Symbol, PERIOD_M15, 0);
-    double low0 = iLow(_Symbol, PERIOD_M15, 0);
-    double high1 = iHigh(_Symbol, PERIOD_M15, 1);
-    double low1 = iLow(_Symbol, PERIOD_M15, 1);
-    double high2 = iHigh(_Symbol, PERIOD_M15, 2);
-    double low2 = iLow(_Symbol, PERIOD_M15, 2);
+    double high0 = iHigh(_Symbol, PERIOD_M15, 1);
+    double low0 = iLow(_Symbol, PERIOD_M15, 1);
+    double high2 = iHigh(_Symbol, PERIOD_M15, 3);
+    double low2 = iLow(_Symbol, PERIOD_M15, 3);
+    datetime closedBarTime = iTime(_Symbol, PERIOD_M15, 1);
 
     // Bullish FVG: Candle 0 low > Candle 2 high
     if(low0 > high2)
     {
         BullishFVG.Upper = low0;
         BullishFVG.Lower = high2;
-        BullishFVG.Time = iTime(_Symbol, PERIOD_M15, 0);
+        BullishFVG.Time = closedBarTime;
         BullishFVG.IsBullish = true;
         BullishFVG.IsValid = true;
 
@@ -821,7 +843,7 @@ void DetectFVG()
     {
         BearishFVG.Upper = low2;
         BearishFVG.Lower = high0;
-        BearishFVG.Time = iTime(_Symbol, PERIOD_M15, 0);
+        BearishFVG.Time = closedBarTime;
         BearishFVG.IsBullish = false;
         BearishFVG.IsValid = true;
 
@@ -832,7 +854,7 @@ void DetectFVG()
     }
 
     // Invalidate FVG if price closes through it
-    double currentClose = iClose(_Symbol, PERIOD_M15, 0);
+    double currentClose = iClose(_Symbol, PERIOD_M15, 1);
 
     if(BullishFVG.IsValid && currentClose < BullishFVG.Lower)
     {
@@ -1047,12 +1069,12 @@ bool PassProtectionChecks()
     // Check 4: Wait after spread spike
     if(SpreadSpikeTime > 0)
     {
-        CandlesSinceSpreadNormal++;
         if(CandlesSinceSpreadNormal < SpreadCalmCandlesWait)
         {
             return false;
         }
         SpreadSpikeTime = 0;
+        CandlesSinceSpreadNormal = 0;
     }
 
     // Check 5: News filter
@@ -1090,6 +1112,57 @@ bool IsInTradingSession()
     TimeToStruct(currentTime, dt);
 
     return (IsInSession(dt, Asian) || IsInSession(dt, London) || IsInSession(dt, NewYork));
+}
+
+//+------------------------------------------------------------------+
+//| Update spread calm candle counter on each new M15 bar             |
+//+------------------------------------------------------------------+
+void UpdateSpreadCalmCounter()
+{
+    if(SpreadSpikeTime <= 0)
+        return;
+
+    double spread = GetCurrentSpread();
+    if(spread <= MaxSpread)
+        CandlesSinceSpreadNormal++;
+    else
+        CandlesSinceSpreadNormal = 0;
+}
+
+//+------------------------------------------------------------------+
+//| Get next session start time                                        |
+//+------------------------------------------------------------------+
+datetime GetNextSessionStart(datetime fromTime)
+{
+    datetime best = 0;
+    MqlDateTime base;
+    TimeToStruct(fromTime, base);
+
+    for(int dayOffset = 0; dayOffset <= 2; dayOffset++)
+    {
+        datetime dayBase = fromTime + (dayOffset * 86400);
+        MqlDateTime dayStruct;
+        TimeToStruct(dayBase, dayStruct);
+
+        MqlDateTime candidate = dayStruct;
+        candidate.sec = 0;
+
+        int starts[3] = {Asian.StartHour * 60 + Asian.StartMinute, London.StartHour * 60 + London.StartMinute, NewYork.StartHour * 60 + NewYork.StartMinute};
+        for(int i = 0; i < 3; i++)
+        {
+            candidate.hour = starts[i] / 60;
+            candidate.min = starts[i] % 60;
+            datetime sessionStart = StructToTime(candidate);
+
+            if(sessionStart > fromTime && (best == 0 || sessionStart < best))
+                best = sessionStart;
+        }
+    }
+
+    if(best == 0)
+        best = fromTime + 3600;
+
+    return best;
 }
 
 //+------------------------------------------------------------------+
@@ -1405,12 +1478,13 @@ void CheckEntrySignals()
 
     // NEW: Calculate Confluence Score
     int confluenceScore = CalculateConfluenceScore(isBuySignal);
-    Print("Confluence Score: ", confluenceScore, " / 100 (Min required: 80)");
+    int minConfluence = HFT_Mode ? MathMax(50, ConfluenceMinScore - 15) : ConfluenceMinScore;
+    Print("Confluence Score: ", confluenceScore, " / 100 (Min required: ", minConfluence, ")");
 
-    // Minimum score check: 80 out of 100
-    if(confluenceScore < 80)
+    // Minimum score check
+    if(confluenceScore < minConfluence)
     {
-        Print("Entry blocked: Confluence score too low (", confluenceScore, " < 80)");
+        Print("Entry blocked: Confluence score too low (", confluenceScore, " < ", minConfluence, ")");
         return;
     }
 
@@ -1542,6 +1616,7 @@ void ExecuteTrade(bool isBuy)
     if(result)
     {
         TradesOpenedToday++;
+        LastTradeOpenTime = TimeCurrent();
         Print("Trade opened successfully. Direction: ", isBuy ? "BUY" : "SELL",
               " | Lot: ", DoubleToString(lotSize, 2),
               " | SL: ", DoubleToString(sl, _Digits),
@@ -1558,8 +1633,12 @@ void ExecuteTrade(bool isBuy)
 //+------------------------------------------------------------------+
 bool ShouldTakeTrade()
 {
-    // BUG 8 FIX: Use input parameters instead of hardcoded value
     int maxTrades = (account.Balance() < 100) ? MaxTradesPerDay_Small : MaxTradesPerDay_Large;
+    if(HFT_Mode)
+        maxTrades = HFT_MaxTradesPerDay;
+
+    if(HFT_Mode && LastTradeOpenTime > 0 && (TimeCurrent() - LastTradeOpenTime) < HFT_MinSecondsBetweenTrades)
+        return false;
 
     return (TradesOpenedToday < maxTrades);
 }
@@ -1841,15 +1920,16 @@ void CreateUI()
     CreateLabel(UI_Label_Prefix + "Week", x + 10, y + 80, "Week: 1", UI_TextColor, 10);
     CreateLabel(UI_Label_Prefix + "Target", x + 10, y + 100, "Target: $100.00", UI_TextColor, 10);
     CreateLabel(UI_Label_Prefix + "Progress", x + 10, y + 120, "Progress: 0%", UI_TextColor, 10);
-    CreateLabel(UI_Label_Prefix + "TodayTrades", x + 10, y + 150, "Today's Trades: 0", UI_TextColor, 10);
-    CreateLabel(UI_Label_Prefix + "OpenPos", x + 10, y + 170, "Open Positions: 0", UI_TextColor, 10);
-    CreateLabel(UI_Label_Prefix + "Status", x + 10, y + 200, "Status: Active", clrLime, 10, true);
-    CreateLabel(UI_Label_Prefix + "ADX", x + 10, y + 230, "ADX: 0.0", UI_TextColor, 9);
-    CreateLabel(UI_Label_Prefix + "RSI", x + 10, y + 250, "RSI: 0.0", UI_TextColor, 9);
-    CreateLabel(UI_Label_Prefix + "Stoch", x + 10, y + 270, "Stoch: 0.0", UI_TextColor, 9);
-    CreateLabel(UI_Label_Prefix + "ATR", x + 10, y + 290, "ATR: 0.0", UI_TextColor, 9);
-    CreateLabel(UI_Label_Prefix + "Spread", x + 10, y + 310, "Spread: 0.0", UI_TextColor, 9);
-    CreateLabel(UI_Label_Prefix + "Session", x + 10, y + 340, "Session: None", UI_TextColor, 10);
+    CreateLabel(UI_Label_Prefix + "WeeklyPnL", x + 10, y + 140, "Weekly P&L: $0.00", UI_TextColor, 10);
+    CreateLabel(UI_Label_Prefix + "TodayTrades", x + 10, y + 165, "Today's Trades: 0", UI_TextColor, 10);
+    CreateLabel(UI_Label_Prefix + "OpenPos", x + 10, y + 185, "Open Positions: 0", UI_TextColor, 10);
+    CreateLabel(UI_Label_Prefix + "Status", x + 10, y + 210, "Status: Active", clrLime, 10, true);
+    CreateLabel(UI_Label_Prefix + "ADX", x + 10, y + 235, "ADX: 0.0", UI_TextColor, 9);
+    CreateLabel(UI_Label_Prefix + "RSI", x + 10, y + 255, "RSI: 0.0", UI_TextColor, 9);
+    CreateLabel(UI_Label_Prefix + "Stoch", x + 10, y + 275, "Stoch: 0.0", UI_TextColor, 9);
+    CreateLabel(UI_Label_Prefix + "ATR", x + 10, y + 295, "ATR: 0.0", UI_TextColor, 9);
+    CreateLabel(UI_Label_Prefix + "Spread", x + 10, y + 315, "Spread: 0.0", UI_TextColor, 9);
+    CreateLabel(UI_Label_Prefix + "Session", x + 10, y + 340, "Session: Closed", UI_TextColor, 10);
     CreateLabel(UI_Label_Prefix + "Footer", x + 10, y + 370, "© 2027 Advanced Trading System", clrDimGray, 8);
 }
 
@@ -1877,6 +1957,7 @@ void UpdateUI()
     double equity = account.Equity();
     double weeklyTarget = GetWeeklyTarget();
     double progress = (balance / weeklyTarget) * 100.0;
+    double weeklyPnL = balance - WeekStartBalance;
 
     ObjectSetString(0, UI_Label_Prefix + "Balance", OBJPROP_TEXT,
                     "Balance: $" + DoubleToString(balance, 2));
@@ -1888,6 +1969,8 @@ void UpdateUI()
                     "Target: $" + DoubleToString(weeklyTarget, 2));
     ObjectSetString(0, UI_Label_Prefix + "Progress", OBJPROP_TEXT,
                     "Progress: " + DoubleToString(progress, 1) + "%");
+    ObjectSetString(0, UI_Label_Prefix + "WeeklyPnL", OBJPROP_TEXT,
+                    "Weekly P&L: $" + DoubleToString(weeklyPnL, 2));
     ObjectSetString(0, UI_Label_Prefix + "TodayTrades", OBJPROP_TEXT,
                     "Today's Trades: " + IntegerToString(TradesOpenedToday));
     ObjectSetString(0, UI_Label_Prefix + "OpenPos", OBJPROP_TEXT,
@@ -1896,14 +1979,19 @@ void UpdateUI()
     // Status
     string status = "Active";
     color statusColor = clrLime;
-    if(IsAccountPaused())
+    if(TradingPausedForever)
+    {
+        status = "Halted";
+        statusColor = clrRed;
+    }
+    else if(IsAccountPaused())
     {
         status = "Paused";
-        statusColor = clrRed;
+        statusColor = clrOrange;
     }
     else if(!IsInTradingSession())
     {
-        status = "Out of Session";
+        status = "Paused";
         statusColor = clrYellow;
     }
 
@@ -1949,7 +2037,7 @@ string GetCurrentSessionName()
     if(IsInSession(dt, London)) return "London";
     if(IsInSession(dt, NewYork)) return "New York";
 
-    return "None";
+    return "Closed";
 }
 
 //+------------------------------------------------------------------+
