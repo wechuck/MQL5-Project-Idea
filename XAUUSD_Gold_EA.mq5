@@ -559,9 +559,14 @@ void DrawH1FibLevel()
 //+------------------------------------------------------------------+
 void DrawM15FibLevel()
 {
-    // Find swing high and low on M15
-    int highestBar = iHighest(_Symbol, PERIOD_M15, MODE_HIGH, 30, 0);
+    // Find rising-channel anchors: swing low first, then swing high after it
     int lowestBar = iLowest(_Symbol, PERIOD_M15, MODE_LOW, 30, 0);
+    if(lowestBar <= 0)
+        return;
+
+    int highestBar = iHighest(_Symbol, PERIOD_M15, MODE_HIGH, lowestBar + 1, 0);
+    if(highestBar < 0)
+        return;
 
     double high = iHigh(_Symbol, PERIOD_M15, highestBar);
     double low = iLow(_Symbol, PERIOD_M15, lowestBar);
@@ -573,19 +578,24 @@ void DrawM15FibLevel()
     datetime highTime = iTime(_Symbol, PERIOD_M15, highestBar);
     datetime currentTime = iTime(_Symbol, PERIOD_M15, 0);
 
-    double bottomAtCurrent = M15_Fib_Level;
-    double topAtCurrent = high;
+    if(lowTime >= currentTime)
+        return;
 
-    long lowToCurrent = (long)(currentTime - lowTime);
-    if(lowToCurrent > 0)
+    double bottomAtCurrent = M15_Fib_Level;
+    double slopePerSecond = (bottomAtCurrent - low) / (double)(currentTime - lowTime);
+    double topAtCurrent = high + slopePerSecond * (double)(currentTime - highTime);
+    datetime topTime2 = currentTime;
+    double topPrice2 = topAtCurrent;
+
+    if(highTime == currentTime)
     {
-        double slopePerSecond = (bottomAtCurrent - low) / (double)lowToCurrent;
-        topAtCurrent = high + slopePerSecond * (double)(currentTime - highTime);
+        topTime2 = currentTime + PeriodSeconds(PERIOD_M15);
+        topPrice2 = high + slopePerSecond * (double)PeriodSeconds(PERIOD_M15);
     }
 
     ObjectDelete(0, "M15_Fib_068_Trend");
     DrawTrendLine("M15_Channel_Bottom", lowTime, low, currentTime, bottomAtCurrent, clrBlue, 3, STYLE_SOLID);
-    DrawTrendLine("M15_Channel_Top", highTime, high, currentTime, topAtCurrent, clrBlue, 3, STYLE_SOLID);
+    DrawTrendLine("M15_Channel_Top", highTime, high, topTime2, topPrice2, clrBlue, 3, STYLE_SOLID);
 }
 
 //+------------------------------------------------------------------+
