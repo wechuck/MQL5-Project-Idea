@@ -154,6 +154,8 @@ Confluence Min Score: 80
 HFT Mode: true
 HFT Max Trades/Day: 10
 HFT Min Seconds Between Trades: 30
+HFT Confluence Reduction: 15
+HFT Minimum Confluence Floor: 50
 
 === Progressive Weekly Targets ===
 Use Progressive Targets: true

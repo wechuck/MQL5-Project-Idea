@@ -47,7 +47,7 @@ input int ADX_Period = 14;                      // ADX Period
 // === IDEA 4: Protection System ===
 input group "IDEA 4 — Protection System"
 input int MaxSpread = 35;                       // Max spread in points
-input int MaxSlippage = 30;                     // Max slippage in points
+input int MaxSlippage = 30;                     // Max slippage in points (XAUUSD fast-market tolerance)
 input int NewsBlockMinutesBefore = 15;          // News block before (minutes)
 input int NewsBlockMinutesAfter = 15;           // News block after (minutes)
 input double ATR_MinThreshold = 5.0;            // ATR minimum threshold
@@ -77,6 +77,8 @@ input int ConfluenceMinScore = 80;              // Standard mode minimum conflue
 input bool HFT_Mode = true;                     // HFT mode enable
 input int HFT_MaxTradesPerDay = 10;             // HFT max trades/day
 input int HFT_MinSecondsBetweenTrades = 30;     // Minimum seconds between entries in HFT mode
+input int HFT_ConfluenceReduction = 15;         // HFT reduction from base confluence score
+input int HFT_MinConfluenceFloor = 50;          // HFT minimum score floor
 
 // === Progressive Weekly Targets ===
 input group "Progressive Weekly Targets"
@@ -148,6 +150,7 @@ bool TradingPausedForever = false;  // BUG 6: For 20% drawdown
 datetime SpreadSpikeTime = 0;
 int CandlesSinceSpreadNormal = 0;
 datetime LastM15BarTime = 0;
+const int FALLBACK_PAUSE_SECONDS = 3600;
 
 // Session high/low tracking (BUG 2)
 struct SessionHighLow {
@@ -1074,7 +1077,6 @@ bool PassProtectionChecks()
             return false;
         }
         SpreadSpikeTime = 0;
-        CandlesSinceSpreadNormal = 0;
     }
 
     // Check 5: News filter
@@ -1160,7 +1162,7 @@ datetime GetNextSessionStart(datetime fromTime)
     }
 
     if(best == 0)
-        best = fromTime + 3600;
+        best = fromTime + FALLBACK_PAUSE_SECONDS;
 
     return best;
 }
@@ -1478,7 +1480,7 @@ void CheckEntrySignals()
 
     // NEW: Calculate Confluence Score
     int confluenceScore = CalculateConfluenceScore(isBuySignal);
-    int minConfluence = HFT_Mode ? MathMax(50, ConfluenceMinScore - 15) : ConfluenceMinScore;
+    int minConfluence = HFT_Mode ? MathMax(HFT_MinConfluenceFloor, ConfluenceMinScore - HFT_ConfluenceReduction) : ConfluenceMinScore;
     Print("Confluence Score: ", confluenceScore, " / 100 (Min required: ", minConfluence, ")");
 
     // Minimum score check
